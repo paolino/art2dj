@@ -20,7 +20,7 @@ file x = do
                                 c = rspCode r
                            in case c of 
                                 (4,0,4) -> putStr (x ++ " not found on " ++ server ++ "\r") >> hFlush stdout
-                                _ -> putStrLn ("\n" ++ "writing file " ++ x) >> writeFile (path </> x) b
+                                _ -> putStrLn ("\n" ++ "writing file " ++ x) >> writeFile (clientPath </> x) b
                 Left e -> putStrLn $ "\n" ++ x ++ " errore " ++ server ++ ":" ++ show e
 
 thread r = do

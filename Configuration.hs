@@ -1,7 +1,6 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 module Configuration where
 
-import Sound.File.Sndfile (Info (..), Format (..), EndianFormat (..), HeaderFormat (..), SampleFormat (..))
 
 -- client parameters
 server = "http://127.0.0.1/"
