@@ -19,15 +19,11 @@ import Data.Array.MArray (newArray_)
 import Unsafe.Coerce (unsafeCoerce)
 import Control.Concurrent (threadDelay)
 
-import Data.Time -- (getCurrentTime , utctDayTime, UTCTime (..))
-import Configuration (lapse, extension, recordTime, fileformat,jackRate)
+import Configuration (lapse, extension, timestamp, fileformat,jackRate)
 
 import Control.Concurrent.STM
 import Control.Concurrent
 import Data.Monoid (mappend)
-import Data.Time.Lens
-import Data.Lens.Lazy
-import Text.Printf
 import System.Console.Haskeline
 import Data.Maybe (fromJust)
 
@@ -47,8 +43,6 @@ main  = do
             flip (setProcess client) nullPtr =<< lift (makeProcess $ capture tchandles tcproduction iL iR)
             withActivation client $ do
                  lift . atomically $ readTChan tcend
-                 clientClose client $ setOfPorts [iL,iR]
-timestamp t = printf "%02d-%02d-%02d %02d:%02d:%02d" (day ^$ t) (month ^$ t) (year ^$ t) (hours ^$ t) (minutes ^$ t) (truncate $ (seconds ^$ t) :: Int)
 interaction :: TChan Handle -> TChan Int -> TChan () -> InputT IO ()
 
 interaction tchandles tcproduction tcend = do
@@ -58,17 +52,17 @@ interaction tchandles tcproduction tcend = do
                 Just [] -> outputStr (fromJust recordTimeS ++ "is not a number! ") >> interaction tchandles tcproduction tcend
                 Just [(recordTime,_)] -> do 
                         liftIO $ do 
-                                t <- getZonedTime 
-                                let name = timestamp t
-                                let     cond t = t < jackRate * recordTime
+                                name <- timestamp recordTime 
+                                let     recordTimeInt = round recordTime
+                                        cond t = t < jackRate * recordTimeInt
                                         cycle t n handle =  if cond t then do 
-                                                putStr $ " " ++ name ++ extension ++ ": " ++ (show $ 100 * t `div` jackRate `div` recordTime) ++ "%  \r"
+                                                putStr $ " " ++ name ++ ": " ++ (show $ 100 * t `div` jackRate `div` recordTimeInt) ++ "%  \r"
                                                 hFlush stdout
                                                 atomically $ writeTChan tchandles handle
                                                 l <- atomically $ readTChan tcproduction
                                                 cycle (t + l) (n + 1) handle
-                                                else putStrLn $ name ++ extension ++ " written." 
-                                handle <- openFile (name ++ extension) WriteMode $ Info 0 jackRate 2 fileformat 1 True
+                                                else putStrLn $ name ++ " written." 
+                                handle <- openFile name WriteMode $ Info 0 jackRate 2 fileformat 1 True
                                 cycle 0 0 handle
                                 hClose handle
                         interaction tchandles tcproduction tcend

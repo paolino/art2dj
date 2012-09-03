@@ -24,9 +24,9 @@ file x = do
                 Left e -> putStrLn $ "\n" ++ x ++ " errore " ++ server ++ ":" ++ show e
 
 thread r = do
-        threadDelay $ polling * 10 ^ 6
-        t <- ((`div` lapse) . truncate . utctDayTime) `fmap` getCurrentTime 
-        when (t > r) $ sequence_ [file (show z ++ extension) | z <- [r + 1 .. t]]
+        t <- timestamp (-60)
+        when (t /= r) $ file t 
+        threadDelay $ 30 * 10 ^ 6
         thread t
 
-main = thread 0
+main = thread ""
