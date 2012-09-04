@@ -1,6 +1,8 @@
-{-# LANGUAGE StandaloneDeriving, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE StandaloneDeriving, GeneralizedNewtypeDeriving, ScopedTypeVariables #-}
 module Main where
 
+
+import Prelude hiding (catch)
 import Sound.JACK (setOfPorts, clientClose, handleExceptions, withPort, withClientDefault, withActivation, Port, Process, waitForBreak, setProcess, makeProcess, NFrames (..), Input, nframesIndices, nframesBounds)
 import Sound.JACK.Audio (getBufferArray, Sample)
 
@@ -24,8 +26,11 @@ import Configuration (lapse, extension, timestamp, fileformat,jackRate)
 import Control.Concurrent.STM
 import Control.Concurrent
 import Data.Monoid (mappend)
-import System.Console.Haskeline
+import System.Console.Haskeline hiding (bracket, handle)
 import Data.Maybe (fromJust)
+import System.Posix.Signals (installHandler, keyboardSignal, Handler(Catch))
+import Control.Exception.Base (AsyncException (..), handle, bracket , throw, throwIO)
+import System.Directory (renameFile)
 
 main:: IO ()
 main  = do
@@ -35,6 +40,9 @@ main  = do
     tchandles <- atomically newTChan
     tcproduction <- atomically newTChan
     tcend <- atomically newTChan
+    _ <- installHandler keyboardSignal
+        (Catch $ atomically $ writeTChan tcproduction Nothing)
+        Nothing
     forkIO . runInputT defaultSettings $ interaction tchandles tcproduction tcend
     handleExceptions $
         withClientDefault name $ \client ->
@@ -43,32 +51,36 @@ main  = do
             flip (setProcess client) nullPtr =<< lift (makeProcess $ capture tchandles tcproduction iL iR)
             withActivation client $ do
                  lift . atomically $ readTChan tcend
-interaction :: TChan Handle -> TChan Int -> TChan () -> InputT IO ()
+
+interaction :: TChan Handle -> TChan (Maybe Int) -> TChan () -> InputT IO ()
 
 interaction tchandles tcproduction tcend = do
-        recordTimeS <- getInputLine $ "Number of seconds to record: "
+        let record cond = do 
+                liftIO $ do 
+                        let       cycle t n handle =  do 
+                                        putStr (" recording time :" ++ show (t `div` jackRate) ++ " seconds\r") >> hFlush stdout
+                                        atomically $ writeTChan tchandles handle -- schedule recording some frames on handle
+                                        ml <- atomically $ readTChan tcproduction -- wait for it
+                                        case ml of
+                                                Nothing -> return () -- keyboard interrupt asked
+                                                Just l -> when (cond $ t + l) $ cycle (t + l) (n + 1) handle -- again
+                        bracket 
+                                (openFile ".tmp" WriteMode $ Info 0 jackRate 2 fileformat 1 True)
+                                (cycle 0 0)
+                                hClose                
+                        name <- timestamp 0
+                        renameFile ".tmp" name
+                        putStrLn $ "\r" ++ name ++ " written."
+        recordTimeS <- getInputLine $ "Recording time in seconds: "
         case reads `fmap` recordTimeS of 
-                Nothing -> liftIO . atomically $ writeTChan tcend ()
-                Just [] -> outputStr (fromJust recordTimeS ++ "is not a number! ") >> interaction tchandles tcproduction tcend
-                Just [(recordTime,_)] -> do 
-                        liftIO $ do 
-                                name <- timestamp recordTime 
-                                let     recordTimeInt = round recordTime
-                                        cond t = t < jackRate * recordTimeInt
-                                        cycle t n handle =  if cond t then do 
-                                                putStr $ " " ++ name ++ ": " ++ (show $ 100 * t `div` jackRate `div` recordTimeInt) ++ "%  \r"
-                                                hFlush stdout
-                                                atomically $ writeTChan tchandles handle
-                                                l <- atomically $ readTChan tcproduction
-                                                cycle (t + l) (n + 1) handle
-                                                else putStrLn $ name ++ " written." 
-                                handle <- openFile name WriteMode $ Info 0 jackRate 2 fileformat 1 True
-                                cycle 0 0 handle
-                                hClose handle
-                        interaction tchandles tcproduction tcend
+                Nothing -> liftIO . atomically $ writeTChan tcend () -- ctrl-d asked 
+                Just [] -> outputStrLn ("recording at infinitum ") >> record (const True) >> interaction tchandles tcproduction tcend
+                Just [(recordTime,_)] -> do
+                        let     recordTimeInt = round recordTime
+                                cond t = t < jackRate * recordTimeInt
+                        outputStrLn ("recording for " ++ show recordTimeInt ++ " seconds ") >> record cond >> interaction tchandles tcproduction tcend
 
-
-capture ::  TChan Handle -> TChan Int -> Port Sample Input -> Port Sample Input -> Process a
+capture ::  TChan Handle -> TChan (Maybe Int) -> Port Sample Input -> Port Sample Input -> Process a
 capture tchandle tcproduction iL iR nframes _args = do
     inLArr <- getBufferArray iL nframes
     inRArr <- getBufferArray iR nframes
@@ -83,6 +95,6 @@ capture tchandle tcproduction iL iR nframes _args = do
                                 readArray inRArr i >>= writeArray output (i,1) . realToFrac
                                 return $ c + 1
                 withStorableArray output $ flip (hPutBuf handle) count
-                atomically $ writeTChan tcproduction count
+                atomically $ writeTChan tcproduction $ Just count
     return eOK
 
