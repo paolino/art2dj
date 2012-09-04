@@ -14,7 +14,6 @@ clientPath = "."
 polling = 3
 
 -- server parameters
-recordTime = 10
 jackRate = 44100
 fileformat = Format HeaderFormatAiff  SampleFormatFloat EndianFile 
 

@@ -7,7 +7,7 @@ import Sound.JACK (setOfPorts, clientClose, handleExceptions, withPort, withClie
 import Sound.JACK.Audio (getBufferArray, Sample)
 
 import Control.Monad.Trans (lift, liftIO)
-import Control.Monad (foldM, forever, when)
+import Control.Monad (foldM, forever, when, liftM2)
 
 import Foreign.Ptr (nullPtr, )
 import Foreign.C.Error (eOK, )
@@ -30,7 +30,8 @@ import System.Console.Haskeline hiding (bracket, handle)
 import Data.Maybe (fromJust)
 import System.Posix.Signals (installHandler, keyboardSignal, Handler(Catch))
 import Control.Exception.Base (AsyncException (..), handle, bracket , throw, throwIO)
-import System.Directory (renameFile)
+import System.Directory (copyFile, getTemporaryDirectory)
+import System.FilePath ((</>))
 
 main:: IO ()
 main  = do
@@ -58,19 +59,18 @@ interaction tchandles tcproduction tcend = do
         let record cond = do 
                 liftIO $ do 
                         let       cycle t n handle =  do 
-                                        putStr (" recording time :" ++ show (t `div` jackRate) ++ " seconds\r") >> hFlush stdout
+                                        putStr (" _ recording time :" ++ show (t `div` jackRate) ++ " seconds _\r") >> hFlush stdout
                                         atomically $ writeTChan tchandles handle -- schedule recording some frames on handle
                                         ml <- atomically $ readTChan tcproduction -- wait for it
                                         case ml of
                                                 Nothing -> return () -- keyboard interrupt asked
                                                 Just l -> when (cond $ t + l) $ cycle (t + l) (n + 1) handle -- again
-                        bracket 
-                                (openFile ".tmp" WriteMode $ Info 0 jackRate 2 fileformat 1 True)
-                                (cycle 0 0)
-                                hClose                
+                        tmpname <- liftM2 (</>) getTemporaryDirectory $ timestamp 0
+                        let info = Info 0 jackRate 2 fileformat 1 True
+                        bracket (openFile tmpname WriteMode info) hClose $ cycle 0 0
                         name <- timestamp 0
-                        renameFile ".tmp" name
-                        putStrLn $ "\r" ++ name ++ " written."
+                        copyFile tmpname name
+                        putStrLn $ "\r**** " ++ name ++ " written. ****                                      "
         recordTimeS <- getInputLine $ "Recording time in seconds: "
         case reads `fmap` recordTimeS of 
                 Nothing -> liftIO . atomically $ writeTChan tcend () -- ctrl-d asked 
